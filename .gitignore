@@ -1,2 +1,3 @@
 _scratch.py
+__init__.py
 *.pkl
