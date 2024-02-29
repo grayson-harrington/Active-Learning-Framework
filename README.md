@@ -1,3 +1,3 @@
-# Active-Learning-Framework
+# BatchActiveLearning
 
 TODO
