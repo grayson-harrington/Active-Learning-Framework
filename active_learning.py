@@ -5,9 +5,9 @@ from copy import copy, deepcopy
 from time import time as now
 
 import numpy as np
-from error_metrics import get_error
+from .error_metrics import get_error
 
-from sampling_strategies import QueryStrategy
+from .sampling_strategies import QueryStrategy
 
 
 class ActiveLearner:
