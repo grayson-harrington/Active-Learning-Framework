@@ -39,7 +39,7 @@ class ActiveLearner:
             Xy_pool (tuple): The pool X and y numpy arrays provided as (X, y) in tuple form. Only X is required.
             Xy_init (tuple): The initial X and y training points provided as numpy arrays as (X, y) in tuple form. Both X and y are required.
             Xy_test (tuple): The test X and y numpy arrays provided as (X, y) in tuple form. Not required, but both X and y are required if it is given.
-            model: The model used for active learning. Must have fit() and predict() functions. The predict function must return (y_pred, y_var)
+            model: The model used for active learning. Must have fit() and predict() functions. The predict function must return (y_pred, y_var) and y_var should be of shape (n_samples, 1). Don't want a variance per output.
             query_strategy (QueryStrategy): A QueryStrategy subclass used for querying new points in the pool.
             probe_function (function): This function takes X as input and outputs associated y values. Required if y_pool is not given in Xy_pool.
             batch_size (int): The number of points to sample in each active learning iteration
@@ -76,6 +76,9 @@ class ActiveLearner:
             self.do_test = True
             self.X_test = np.copy(Xy_test[0])
             self.y_test = np.copy(Xy_test[1])
+        
+        self.new_X = None
+        self.new_y = None
 
         self.inds_pool = np.arange(self.X_pool.shape[0])
         self.inds_selected = []
@@ -90,6 +93,7 @@ class ActiveLearner:
             "n_selected": [],
             "n_samples": [],
             "inds_selected": [],
+            "new_Xy": [],
             "inds_queried": [],
             "train_time": [],
             "query_time": [],
@@ -126,11 +130,10 @@ class ActiveLearner:
         """
 
         y_pred, y_uncert = self.model.predict(self.X_scaler.transform(X), **self.model_kwargs)
+        s = y_pred.shape
         if len(y_pred.shape) == 1:
             y_pred = y_pred.reshape(-1, 1)
-            y_uncert = y_uncert.reshape(-1, 1)
-        y_pred = self.y_scaler.inverse_transform(y_pred).flatten()
-        y_uncert = self.y_scaler.inverse_transform(y_uncert).flatten()
+        y_pred = self.y_scaler.inverse_transform(y_pred).reshape(s)
 
         error = (
             get_error(y, y_pred, metric=error_metric, axis=error_axis)
@@ -185,6 +188,7 @@ class ActiveLearner:
             self.batch_size = batch_size
 
         save_mod = int(n_iter * save_percent)
+        save_mod = save_mod if save_mod > 0 else 1
 
         print("Starting Active Learning Loop")
         print(f"Query Strategy: {self.query_strategy.NAME}")
@@ -275,8 +279,6 @@ class ActiveLearner:
         self.inds_queried = self.query(self.batch_size, uncertainties_pool=y_uncert)
         t_q = now() - t_q
 
-        t_u = now() - t_u
-
         # save all things that should be saved
         self.save_states["n_iter"] = self.save_states["n_iter"] + 1
         self.save_states["models"].append(
@@ -288,10 +290,13 @@ class ActiveLearner:
         self.save_states["n_selected"].append(len(self.inds_selected))
         self.save_states["n_samples"].append(len(self.X_train))
         self.save_states["inds_selected"].append(copy(self.inds_selected))
+        self.save_states["new_Xy"].append((copy(self.new_X), copy(self.new_y)))
         self.save_states["inds_queried"].append(copy(self.inds_queried))
-        self.save_states["update_time"].append(t_u)
-        self.save_states["query_time"].append(t_q)
         self.save_states["train_time"].append(t_t)
+        self.save_states["query_time"].append(t_q)
+        t_u = now() - t_u
+        self.save_states["update_time"].append(t_u)
+        
 
     def query(self, batch_size, **kwargs):
         """Given a batch size and kwargs associated with the specific QueryStrategy, pool indices are sampled to be labeled.
@@ -359,6 +364,9 @@ class ActiveLearner:
             new_y = self.probe(self.probe_function, new_X)
         else:
             new_y = self.y_pool[self.inds_queried]
+        
+        self.new_X = new_X # for saving later.
+        self.new_y = new_y
 
         # update train arrays
         self.X_train = np.concatenate((self.X_train, new_X), axis=0)
