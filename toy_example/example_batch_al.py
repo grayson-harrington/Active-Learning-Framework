@@ -1,9 +1,6 @@
 # %%
 
 import os
-import sys
-sys.path.append('..')
-
 import pickle
 import numpy as np
 
@@ -13,8 +10,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.gaussian_process import GaussianProcessRegressor as GPR
 from sklearn.gaussian_process.kernels import Matern
 
-from active_learning import ActiveLearner
-from sampling_strategies import (
+from BatchActiveLearning.active_learning import ActiveLearner
+from BatchActiveLearning.sampling_strategies import (
     QueryRandom,
     QueryUncertainty,
     QueryDiversity,
@@ -101,10 +98,9 @@ plt.ylabel("X frequency")
 X_scaler = StandardScaler().fit(X)
 y_scaler = StandardScaler().fit(y)
 
-X = X_scaler.transform(X)
-y = y_scaler.transform(y)
-
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.33)
+X_train, X_test, y_train, y_test = train_test_split(
+    X_scaler.transform(X), y_scaler.transform(y), test_size=0.33
+)
 
 kernel = Matern()
 model = GPR(kernel=kernel, n_restarts_optimizer=10)
@@ -200,6 +196,7 @@ for query_strategy in query_strategies:
         model_kwargs={"return_std": True},
         query_strategy=query_strategy,
         probe_function=probe_X,
+        scaler=StandardScaler(),
         batch_size=batch_size,
         random_state=42,
     )

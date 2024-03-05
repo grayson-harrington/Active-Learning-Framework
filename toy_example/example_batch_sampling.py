@@ -1,13 +1,10 @@
 # %%
 
 import os
-import sys
-sys.path.append('..')
-
 import numpy as np
 import matplotlib.pyplot as plt
 
-from sampling_strategies import (
+from BatchActiveLearning.sampling_strategies import (
     QueryStrategy,
     QueryRandom,
     QueryUncertainty,
