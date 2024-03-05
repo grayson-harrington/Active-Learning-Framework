@@ -1,8 +1,6 @@
 # %%
 
 import os
-import sys
-sys.path.append('..')
 
 import pickle
 import numpy as np
@@ -13,8 +11,8 @@ from sklearn.model_selection import train_test_split
 from sklearn.gaussian_process import GaussianProcessRegressor as GPR
 from sklearn.gaussian_process.kernels import Matern
 
-from active_learning import ActiveLearner
-from sampling_strategies import QueryUncertainty
+from BatchActiveLearning.active_learning import ActiveLearner
+from BatchActiveLearning.sampling_strategies import QueryUncertainty
 
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
@@ -97,10 +95,9 @@ plt.ylabel("X density")
 X_scaler = StandardScaler().fit(X)
 y_scaler = StandardScaler().fit(y)
 
-X = X_scaler.transform(X)
-y = y_scaler.transform(y)
-
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.33)
+X_train, X_test, y_train, y_test = train_test_split(
+    X_scaler.transform(X), y_scaler.transform(y), test_size=0.33
+)
 
 kernel = Matern()
 model = GPR(kernel=kernel, n_restarts_optimizer=10)
@@ -164,7 +161,6 @@ y_test = y[test_inds]
 
 n_iter = 250
 
-
 # define the probe function, f(X) --> y
 def probe_X(X):
     X = np.reshape(X, (-1, X.shape[-1]))
@@ -194,6 +190,7 @@ active_learner = ActiveLearner(
     model_kwargs={"return_std": True},
     query_strategy=query_strategy,
     probe_function=probe_X,
+    scaler=StandardScaler(),
     batch_size=1,  # setting batch size to 1 to show traditional AL sampling
     random_state=42,
 )
@@ -253,28 +250,27 @@ print(len(results["models"]))
 model_full_predictions = []
 points_sampled_full = results["inds_queried"]
 
-for model in results["models"]:
-    model_full_predictions.append(model.predict(X_scaler.transform(X_full)))
+for model, (X_scaler, y_scaler) in zip(results["models"], results["scalers"]):
+    model_full_predictions.append(
+        y_scaler.inverse_transform(model.predict(X_scaler.transform(X_full)).reshape(-1, 1))
+    )
 
 model_full_predictions = np.array(model_full_predictions)
 print(model_full_predictions.shape)
 
 # %%
 
+
 def animate(frame):
-    y_full_pred = y_scaler.inverse_transform(
-        model_full_predictions[frame].reshape(-1, 1)
-    )
+    y_full_pred = model_full_predictions[frame].reshape(-1, 1)
 
     plt.clf()
     plt.plot(X_full, y_full, "k-", label="True", zorder=0)
     plt.plot(X_full, y_full_pred, "b-", label="Pred", zorder=1)
     plt.scatter(
-        X_scaler.inverse_transform(
-            X_pool[points_sampled_full[: frame + 1]].reshape(-1, 1)
-        ),
+        X_pool[points_sampled_full[: frame + 1]],
         [-0.2] * (frame + 1),
-        c='tab:orange',
+        c="tab:orange",
         alpha=0.2,
         edgecolor="none",
         label="Sampled X",
@@ -282,7 +278,7 @@ def animate(frame):
     plt.scatter(
         X_scaler.inverse_transform(X_init.reshape(-1, 1)),
         [-0.2] * len(X_init),
-        c='tab:blue',
+        c="tab:blue",
         edgecolor="none",
         label="Initial X",
     )
@@ -292,9 +288,10 @@ def animate(frame):
     plt.ylim(-0.3, 2.1)
     plt.legend()
 
-    plt.text(0.1, -0.1, f'{frame + 1} points sampled', fontsize=10)
+    plt.text(0.1, -0.1, f"{frame + 1} points sampled", fontsize=10)
 
     return plt
+
 
 # Create the animation
 anim = FuncAnimation(

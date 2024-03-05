@@ -5,8 +5,8 @@ from copy import copy, deepcopy
 from time import time as now
 
 import numpy as np
+from sklearn.preprocessing import StandardScaler
 from .error_metrics import get_error
-
 from .sampling_strategies import QueryStrategy
 
 
@@ -29,6 +29,7 @@ class ActiveLearner:
         query_strategy,
         probe_function,
         batch_size,
+        scaler=StandardScaler(),
         random_state=None,
         model_kwargs={},
     ):
@@ -42,6 +43,7 @@ class ActiveLearner:
             query_strategy (QueryStrategy): A QueryStrategy subclass used for querying new points in the pool.
             probe_function (function): This function takes X as input and outputs associated y values. Required if y_pool is not given in Xy_pool.
             batch_size (int): The number of points to sample in each active learning iteration
+            scaler (obj, optional): Scaler / normalizer to update when more data has been added to the training set. Must have, fit(), transform(), and inverse_transform() methods
             random_state (int, optional): Random state. Defaults to None.
             model_kwargs (dict, optional): additional kwargs that are used in model.predict(). For example, the sklearn GPR class would have model_kwargs={"return_std": True}. Defaults to {}.
         """
@@ -52,6 +54,9 @@ class ActiveLearner:
         self.model_kwargs = model_kwargs
         self.query_strategy = query_strategy
         self.probe_function = probe_function
+        self.scaler = scaler
+        self.X_scaler = copy(self.scaler)
+        self.y_scaler = copy(self.scaler)
 
         self.batch_size = batch_size
 
@@ -60,6 +65,9 @@ class ActiveLearner:
 
         self.X_train = np.copy(Xy_init[0])
         self.y_train = np.copy(Xy_init[1])
+
+        self.X_scaler = self.X_scaler.fit(self.X_train)
+        self.y_scaler = self.y_scaler.fit(self.y_train)
 
         self.do_test = False
         self.X_test = None
@@ -76,6 +84,7 @@ class ActiveLearner:
         self.save_states = {
             "n_iter": 0,
             "models": [],
+            "scalers": [],
             "err_train": [],
             "err_test": [],
             "n_selected": [],
@@ -90,7 +99,10 @@ class ActiveLearner:
     def train_model(self):
         """train model with the model's fit() function"""
 
-        self.model.fit(self.X_train, self.y_train)
+        self.model.fit(
+            self.X_scaler.transform(self.X_train),
+            self.y_scaler.transform(self.y_train),
+        )
 
     def evaluate_model(
         self,
@@ -113,7 +125,12 @@ class ActiveLearner:
             (tuple): Return value is either (y_pred, y_uncertainty, error) or error. The former is true if return_pred_uncert is true. Otherwise the later is true.
         """
 
-        y_pred, y_uncert = self.model.predict(X, **self.model_kwargs)
+        y_pred, y_uncert = self.model.predict(self.X_scaler.transform(X), **self.model_kwargs)
+        if len(y_pred.shape) == 1:
+            y_pred = y_pred.reshape(-1, 1)
+            y_uncert = y_uncert.reshape(-1, 1)
+        y_pred = self.y_scaler.inverse_transform(y_pred).flatten()
+        y_uncert = self.y_scaler.inverse_transform(y_uncert).flatten()
 
         error = (
             get_error(y, y_pred, metric=error_metric, axis=error_axis)
@@ -136,7 +153,7 @@ class ActiveLearner:
         save_path=None,
     ):
         """The main active learning loop. Once the loop as started, in each iteration the following take place:
-        1) training datasets are updated,
+        1) training datasets are updated, incuding scalers
         2) the model is trained,
         3) the model is evaluated on train, test, and pool,
         4) the performance on pool is used to new points to add to the training datasets.
@@ -248,7 +265,9 @@ class ActiveLearner:
 
         # evaluate model on pool (this must be done on what remains of the pool)
         _, y_uncert, _ = self.evaluate_model(
-            self.X_pool[self.inds_pool], return_pred_uncert=True, error_metric="RMSE"
+            self.X_pool[self.inds_pool],
+            return_pred_uncert=True,
+            error_metric="RMSE",
         )
 
         # query
@@ -260,9 +279,10 @@ class ActiveLearner:
 
         # save all things that should be saved
         self.save_states["n_iter"] = self.save_states["n_iter"] + 1
-        self.save_states["model"].append(
+        self.save_states["models"].append(
             deepcopy(self.model)
         )  # this could be memory intensive for large models with many sampling iterations
+        self.save_states["scalers"].append((copy(self.X_scaler), copy(self.y_scaler)))
         self.save_states["err_train"].append(err_train)
         self.save_states["err_test"].append(err_test)
         self.save_states["n_selected"].append(len(self.inds_selected))
@@ -343,6 +363,10 @@ class ActiveLearner:
         # update train arrays
         self.X_train = np.concatenate((self.X_train, new_X), axis=0)
         self.y_train = np.concatenate((self.y_train, new_y), axis=0)
+
+        # update scalers
+        self.X_scaler = self.X_scaler.fit(self.X_train)
+        self.y_scaler = self.y_scaler.fit(self.y_train)
 
         # update inds arrays
         self.inds_selected.extend(self.inds_queried)
